@@ -104,6 +104,14 @@ def main():
     fixedData = fixedData[(fixedData['fpkm'] != 0.0) & 
             (fixedData['effLength'] > 0)]
 
+    # TODO: Find bug that does...
+    # /Library/Python/2.7/site-packages/pandas/core/series.py:628:
+    # SettingWithCopyWarning: A value is trying to be set on a copy of a slice
+    # from a DataFrame self.where(~key, value, inplace=True)
+    # I think it's coming from the ~ usage in the next block
+
+    # TODO: clean this mess up and modularize is
+
     # compute rho
     denom = fixedData['fpkm'].sum()
     fixedData['lrho'] = np.log(fixedData['fpkm']) - np.log(denom)
@@ -119,10 +127,6 @@ def main():
     # remove isoforms with < 0.5 mean fragments
     fixedData = fixedData[fixedData['meanFrag'] > 0.5]
 
-    # TODO: Find bug that does...
-    # /Library/Python/2.7/site-packages/pandas/core/series.py:628:
-    # SettingWithCopyWarning: A value is trying to be set on a copy of a slice
-    # from a DataFrame self.where(~key, value, inplace=True)
 
     # decide whether isoform is going to be DE
     fixedData['isDE'] = np.random.uniform(0, 1, fixedData.shape[0]) <= 0.10
