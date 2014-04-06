@@ -1,5 +1,6 @@
 import io
 import sys
+import time
 
 # import matplotlib as plt
 import numpy as np
@@ -79,13 +80,91 @@ def computeLogRho(counts, effLen):
 def lrhoToTpm(lrho):
     return np.exp(lrho + np.log(10000000))
 
-# def computeLogAlpha(logRho, effLen):
 
+@profile
+def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
+    leftHandle = open(filePrefix + "_left.fasta", "w")
+    rightHandle = open(filePrefix + "_right.fasta", "w")
+
+    nTotal = countSeries.sum()
+    countSeries = countSeries[countSeries > 0]
+
+    # remove mass < readLen and renormalize
+    fld[0:(readLen-1)] = 0.0
+    fld = fld / fld.sum()
+
+    flRange = pd.Series(range(readLen, fld.shape[0] + 1), 
+            index = range(readLen, fld.shape[0] + 1))
+    print flRange
+
+    # create Series of FLD from [readLen, maxFL]
+    # FIXME: there's an off-by-one error here but I'm too lazy to fix it 
+    # and it shouldn't make a big difference...
+    flds = flRange.map(lambda x: (fld.ix[readLen:x] / fld.ix[readLen:x].sum()).tolist())
+    flds = flds.to_dict()
+    maxFl = max(flds.keys())
+
+
+    readNum = 0
+    while countSeries.shape[0] > 0:
+    # it = 5
+    # while it > 0:
+        # choose a transcript
+        trans = np.random.randint(countSeries.shape[0])
+        transName = countSeries.index[trans]
+        transLen = len(seqs.iloc[trans])
+        transSeq = seqs.iloc[trans]
+
+        # choose a frag length
+        curMaxFl = min(transLen, maxFl)
+        curFl = np.random.choice(len(flds[curMaxFl]), p = flds[curMaxFl])
+        # curFl += readLen
+
+        # choose a start site
+        # print transName, curMaxFl, curFl
+        startSite = np.random.choice(transLen - curFl)
+        left = transSeq[startSite:(startSite + readLen)]
+        right = transSeq[(curFl + startSite - readLen):(startSite + curFl)]
+
+        # randomly choose if reverse complement
+        if np.random.random() > 0.5:
+            left = left.reverse_complement()
+            right = right.reverse_complement()
+
+        # if no more counts from this isoform, trash it
+        countSeries.iloc[trans] -= 1
+        if countSeries.iloc[trans] == 0:
+            countSeries = countSeries.drop(transName)
+            seqs = seqs.drop(transName)
+    
+        fa_write(leftHandle, str(readNum), str(left))
+        fa_write(rightHandle, str(readNum), str(right))
+        
+        readNum += 1
+
+    leftHandle.close()
+    rightHandle.close()
+
+def fa_write(fhandle, seq_id, seq):
+    """
+    Write to a FASTA file in the FASTA format.
+
+    Arguments:
+    - `fhandle`: A file handle open for writing
+    - `seq_id`: The sequence id string for this sequence
+    - `seq`: An unformatted string of the sequence to write
+    """
+    line_len = 60
+    fhandle.write(">" + seq_id + "\n")
+    for i in xrange(len(seq) / line_len + 1):
+        start = i * line_len
+        end = (i+1) * line_len if (i+1) * line_len < len(seq) else len(seq)
+        fhandle.write( seq[ start:end ] + "\n")
 
 def main():
     cfg = {}
     execfile(sys.argv[1], cfg) 
-    # execfile("/Users/hjp/Documents/lmcb/rnaSeqSim/examples/oneChr.cfg", cfg)
+    # execfile("/Users/hjp/Documents/lmcb/pretender/examples/erythroidMouse.cfg", cfg)
 
     print "Reading transcriptome sequence ", cfg["fasta"]
     fixedData = readFasta(cfg["fasta"])
@@ -101,8 +180,11 @@ def main():
     geneLabels = pd.read_csv(cfg["geneLabels"], index_col = 0)
 
     # remove everything w/ FPKM 0 and with negative effective length
-    fixedData = fixedData[(fixedData['fpkm'] != 0.0) & 
-            (fixedData['effLength'] > 0)]
+    # XXX: consider removing everything w/ effLength < mean(fld)
+    # XXX: look into transcripts w/  really short effective lengths... might be
+    # getting too much expression
+    fixedData = fixedData[(fixedData['fpkm'] != 0.0) & (fixedData['effLength']
+        >= 0)]
 
     # TODO: Find bug that does...
     # /Library/Python/2.7/site-packages/pandas/core/series.py:628:
@@ -156,7 +238,8 @@ def main():
     print "Simulating negative binomials.."
     counts1 = fixedData['nb1'].apply(lambda x: pd.Series(x.rvs(cfg["n1"])))
     counts2 = fixedData['nb2'].apply(lambda x: pd.Series(x.rvs(cfg["n2"])))
-    isoCounts = pd.concat([counts1, counts2], axis = 1, )
+    isoCounts = pd.concat([counts1, counts2], axis = 1) 
+    isoCounts.columns = range(cfg["n1"] + cfg["n2"])
 
     lrho = computeLogRho(isoCounts, fixedData['effLength'])
 
@@ -173,6 +256,13 @@ def main():
     # The "null" group is called "NotAGene"
     tpm['gene'] = tpm['gene'].fillna("NotAGene")
     geneTpm = tpm.groupby('gene').sum()
+
+    # TODO: output tables (iso table and gene table)
+    startTime = time.time()
+    hi = simulateReads(isoCounts[0], cfg["readLength"], fixedData['seq'], fld, 
+            "sim")
+    stopTime = time.time()
+    print stopTime - startTime
 
 
 if __name__ == "__main__":
