@@ -80,7 +80,6 @@ def computeLogRho(counts, effLen):
 def lrhoToTpm(lrho):
     return np.exp(lrho + np.log(10000000))
 
-
 @profile
 def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
     leftHandle = open(filePrefix + "_left.fasta", "w")
@@ -95,7 +94,7 @@ def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
 
     flRange = pd.Series(range(readLen, fld.shape[0] + 1), 
             index = range(readLen, fld.shape[0] + 1))
-    print flRange
+    # print flRange
 
     # create Series of FLD from [readLen, maxFL]
     # FIXME: there's an off-by-one error here but I'm too lazy to fix it 
@@ -103,44 +102,50 @@ def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
     flds = flRange.map(lambda x: (fld.ix[readLen:x] / fld.ix[readLen:x].sum()).tolist())
     flds = flds.to_dict()
     maxFl = max(flds.keys())
+    flds = flds.values()
 
+    ranOrder = np.random.choice(nTotal, size = nTotal)
+    allLeft = [None] * nTotal
+    allRight = [None] * nTotal
 
     readNum = 0
-    while countSeries.shape[0] > 0:
-    # it = 5
-    # while it > 0:
-        # choose a transcript
-        trans = np.random.randint(countSeries.shape[0])
+    for trans in xrange(countSeries.shape[0]):
         transName = countSeries.index[trans]
         transLen = len(seqs.iloc[trans])
         transSeq = seqs.iloc[trans]
-
         # choose a frag length
         curMaxFl = min(transLen, maxFl)
-        curFl = np.random.choice(len(flds[curMaxFl]), p = flds[curMaxFl])
-        # curFl += readLen
+        fragLens = np.random.choice(len(flds[curMaxFl - readLen]), 
+                size = countSeries.iloc[trans], 
+                p = flds[curMaxFl - readLen])
+        fragNum = 0
 
-        # choose a start site
-        # print transName, curMaxFl, curFl
-        startSite = np.random.choice(transLen - curFl)
-        left = transSeq[startSite:(startSite + readLen)]
-        right = transSeq[(curFl + startSite - readLen):(startSite + curFl)]
-
-        # randomly choose if reverse complement
-        if np.random.random() > 0.5:
-            left = left.reverse_complement()
-            right = right.reverse_complement()
-
-        # if no more counts from this isoform, trash it
-        countSeries.iloc[trans] -= 1
-        if countSeries.iloc[trans] == 0:
-            countSeries = countSeries.drop(transName)
-            seqs = seqs.drop(transName)
+        for fragIt in xrange(countSeries.iloc[trans]):
+            # choose a transcript
+            #trans = np.random.randint(countSeries.shape[0])
     
-        fa_write(leftHandle, str(readNum), str(left))
-        fa_write(rightHandle, str(readNum), str(right))
-        
-        readNum += 1
+            curFl = fragLens[fragNum]
+    
+            # choose a start site
+            # print transName, curMaxFl, curFl
+            startSite = np.random.choice(transLen - curFl)
+            left = transSeq[startSite:(startSite + readLen)]
+            right = transSeq[(curFl + startSite - readLen):(startSite + curFl)]
+    
+            # randomly choose if reverse complement
+            if np.random.random() > 0.5:
+                left = left.reverse_complement()
+                right = right.reverse_complement()
+    
+            allLeft[ranOrder[readNum]] = left
+            allRight[ranOrder[readNum]] = right
+    
+            readNum += 1
+            fragNum += 1
+
+    for i in xrange(len(allLeft)):
+        fa_write(leftHandle, str(i), str(allLeft[i]))
+        fa_write(rightHandle, str(i), str(allRight[i]))
 
     leftHandle.close()
     rightHandle.close()
@@ -174,7 +179,7 @@ def main():
     print "Reading fragment length distribution ", cfg["fld"]
     fld = pd.read_table(cfg["fld"], header = None)[0]
     meanFl = sum(fld * pd.Series(range(0, len(fld))))
-    print "Computing effective length ", cfg["fld"]
+    print "Computing (mean) effective length ", cfg["fld"]
     fixedData = computeEffLength(fixedData, meanFl)
 
     geneLabels = pd.read_csv(cfg["geneLabels"], index_col = 0)
