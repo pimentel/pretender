@@ -81,7 +81,7 @@ def lrhoToTpm(lrho):
     return np.exp(lrho + np.log(10000000))
 
 @profile
-def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
+def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     leftHandle = open(filePrefix + "_left.fasta", "w")
     rightHandle = open(filePrefix + "_right.fasta", "w")
 
@@ -108,11 +108,15 @@ def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
     allLeft = [None] * nTotal
     allRight = [None] * nTotal
 
+    # revSeqs = seqs.apply(lambda x: str(x.reverse_complement()))
+    # seqs = seqs.apply(lambda x: str(x))
+
     readNum = 0
     for trans in xrange(countSeries.shape[0]):
         transName = countSeries.index[trans]
         transLen = len(seqs.iloc[trans])
         transSeq = seqs.iloc[trans]
+        transRevSeq = revSeqs.iloc[trans]
         # choose a frag length
         curMaxFl = min(transLen, maxFl)
         fragLens = np.random.choice(len(flds[curMaxFl - readLen]), 
@@ -128,14 +132,17 @@ def simulateReads(countSeries, readLen, seqs, fld, filePrefix):
     
             # choose a start site
             # print transName, curMaxFl, curFl
-            startSite = np.random.choice(transLen - curFl)
-            left = transSeq[startSite:(startSite + readLen)]
-            right = transSeq[(curFl + startSite - readLen):(startSite + curFl)]
+            # startSite = np.random.choice(transLen - curFl)
+            startSite = int(np.random.random() * (transLen - curFl - 1))
     
             # randomly choose if reverse complement
+            endSite = startSite + curFl
             if np.random.random() > 0.5:
-                left = left.reverse_complement()
-                right = right.reverse_complement()
+                left = transSeq[startSite:(startSite + readLen)]
+                right = transSeq[endSite - readLen:endSite]
+            else:
+                left = transRevSeq[startSite:(startSite + readLen)]
+                right = transRevSeq[endSite - readLen:endSite]
     
             allLeft[ranOrder[readNum]] = left
             allRight[ranOrder[readNum]] = right
@@ -173,13 +180,15 @@ def main():
 
     print "Reading transcriptome sequence ", cfg["fasta"]
     fixedData = readFasta(cfg["fasta"])
+    fixedData['revSeq'] = fixedData['seq'].apply(lambda x: str(x.reverse_complement()))
+    fixedData['seq'] = fixedData['seq'].apply(lambda x: str(x))
     print "Reading relative abundances ", cfg["fpkm"]
     fpkm = readFpkm(cfg["fpkm"])
     fixedData['fpkm'] = fpkm 
     print "Reading fragment length distribution ", cfg["fld"]
     fld = pd.read_table(cfg["fld"], header = None)[0]
     meanFl = sum(fld * pd.Series(range(0, len(fld))))
-    print "Computing (mean) effective length ", cfg["fld"]
+    print "Computing (mean effective length ", cfg["fld"]
     fixedData = computeEffLength(fixedData, meanFl)
 
     geneLabels = pd.read_csv(cfg["geneLabels"], index_col = 0)
@@ -240,7 +249,7 @@ def main():
                     else None, axis = 1)
     fixedData = fixedData[fixedData['nb1'].notnull() & fixedData['nb2'].notnull()]
 
-    print "Simulating negative binomials.."
+    print "Simulating counts from negative binomials.."
     counts1 = fixedData['nb1'].apply(lambda x: pd.Series(x.rvs(cfg["n1"])))
     counts2 = fixedData['nb2'].apply(lambda x: pd.Series(x.rvs(cfg["n2"])))
     isoCounts = pd.concat([counts1, counts2], axis = 1) 
@@ -263,8 +272,9 @@ def main():
     geneTpm = tpm.groupby('gene').sum()
 
     # TODO: output tables (iso table and gene table)
+    print "Simulating fragments"
     startTime = time.time()
-    hi = simulateReads(isoCounts[0], cfg["readLength"], fixedData['seq'], fld, 
+    hi = simulateReads(isoCounts[0], cfg["readLength"], fixedData['seq'], fixedData['revSeq'], fld, 
             "sim")
     stopTime = time.time()
     print stopTime - startTime
