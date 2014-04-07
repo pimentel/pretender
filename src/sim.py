@@ -95,7 +95,6 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
 
     flRange = pd.Series(range(readLen, fld.shape[0] + 1), 
             index = range(readLen, fld.shape[0] + 1))
-    # print flRange
 
     # create Series of FLD from [readLen, maxFL]
     # FIXME: there's an off-by-one error here but I'm too lazy to fix it 
@@ -110,18 +109,16 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     allRight = [None] * nTotal
 
     # whichTrans = [None] * nTotal
-    # revSeqs = seqs.apply(lambda x: str(x.reverse_complement()))
-    # seqs = seqs.apply(lambda x: str(x))
 
     readNum = 0
+    left = None
+    right = None
     for trans in xrange(countSeries.shape[0]):
         transName = countSeries.index[trans]
         transLen = len(seqs.loc[transName])
         transSeq = seqs.loc[transName]
-        # if transSeq != seqs.loc[transName]:
-        #     print "ERR: SEQUENCE DOES NOT MATCH!!!"
-        #     print transName, seqs.index[trans]
         transRevSeq = revSeqs.loc[transName]
+
         # choose a frag length
         curMaxFl = min(transLen, maxFl)
         fragLens = np.random.choice(len(flds[curMaxFl - readLen]), 
@@ -130,9 +127,7 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
         fragNum = 0
 
         for fragIt in xrange(countSeries.iloc[trans]):
-            # choose a transcript
-            #trans = np.random.randint(countSeries.shape[0])
-    
+
             curFl = fragLens[fragNum] + readLen
     
             # choose a start site
@@ -142,24 +137,13 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     
             # randomly choose if reverse complement
             endSite = startSite + curFl
-            left = None
-            right = None
 
-            # TODO: add functionality for reverse strand reads
-            # if np.random.random() > 0.5:
-            if True:
+            if np.random.random() > 0.5:
                 left = transSeq[startSite:(startSite + readLen)]
                 right = transRevSeq[endSite:(endSite - readLen):-1]
-                # right = transRevSeq[(endSite - readLen):endSite]
-                # right = transSeq[(endSite - readLen):endSite]
-                #right = right[::-1]
             else:
-                left = transRevSeq[startSite:(startSite + readLen)]
-                right = transRevSeq[(endSite - readLen):endSite]
-
-            # if right == "" or right is None:
-            #     print startSite, endSite - readLen, endSite, curFl, transLen
-
+                left = transRevSeq[endSite:(endSite - readLen):-1]
+                right = transSeq[startSite:(startSite + readLen)]
     
             allLeft[ranOrder[readNum]] = left
             allRight[ranOrder[readNum]] = right
@@ -174,8 +158,6 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
         fa_write(leftHandle, str(i), str(allLeft[i]))
     for i in xrange(len(allLeft)):
         fa_write(rightHandle, str(i), str(allRight[i]))
-        # fa_write(leftHandle, str(i) + ":" + whichTrans[i], str(allLeft[i]))
-        # fa_write(rightHandle, str(i) + ":" + whichTrans[i], str(allRight[i]))
 
     leftHandle.close()
     rightHandle.close()
@@ -307,6 +289,7 @@ def main():
 
     print "Simulating fragments"
     for i in xrange(isoCounts.shape[1]):
+    # for i in xrange(1):
         print "\tExperiment ", i
         startTime = time.time()
         simulateReads(isoCounts[i], cfg["readLength"], fixedData['seq'], 
