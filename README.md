@@ -24,6 +24,12 @@ listAttributes(mart)
 geneNames <- getBM(attributes
       = c("ensembl_transcript_id","external_gene_id"), mart
       = mart)
-write.csv(geneNames, file = "geneNames.csv")
+write.csv(geneNames, file = "geneNames.csv", row.names = F)
+```
+
+## Extracting the fragment length distribution
+
+```bash
+head -n 2 params.xprs | tail -n 1 | perl -pe "s/\t+/\n/g" > fld.txt
 ```
 

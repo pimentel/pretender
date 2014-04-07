@@ -1,4 +1,5 @@
 import io
+import os
 import sys
 import time
 
@@ -80,7 +81,7 @@ def computeLogRho(counts, effLen):
 def lrhoToTpm(lrho):
     return np.exp(lrho + np.log(10000000))
 
-@profile
+# @profile
 def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     leftHandle = open(filePrefix + "_left.fasta", "w")
     rightHandle = open(filePrefix + "_right.fasta", "w")
@@ -104,19 +105,23 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     maxFl = max(flds.keys())
     flds = flds.values()
 
-    ranOrder = np.random.choice(nTotal, size = nTotal)
+    ranOrder = np.random.choice(nTotal, size = nTotal, replace = False)
     allLeft = [None] * nTotal
     allRight = [None] * nTotal
 
+    # whichTrans = [None] * nTotal
     # revSeqs = seqs.apply(lambda x: str(x.reverse_complement()))
     # seqs = seqs.apply(lambda x: str(x))
 
     readNum = 0
     for trans in xrange(countSeries.shape[0]):
         transName = countSeries.index[trans]
-        transLen = len(seqs.iloc[trans])
-        transSeq = seqs.iloc[trans]
-        transRevSeq = revSeqs.iloc[trans]
+        transLen = len(seqs.loc[transName])
+        transSeq = seqs.loc[transName]
+        # if transSeq != seqs.loc[transName]:
+        #     print "ERR: SEQUENCE DOES NOT MATCH!!!"
+        #     print transName, seqs.index[trans]
+        transRevSeq = revSeqs.loc[transName]
         # choose a frag length
         curMaxFl = min(transLen, maxFl)
         fragLens = np.random.choice(len(flds[curMaxFl - readLen]), 
@@ -128,7 +133,7 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
             # choose a transcript
             #trans = np.random.randint(countSeries.shape[0])
     
-            curFl = fragLens[fragNum]
+            curFl = fragLens[fragNum] + readLen
     
             # choose a start site
             # print transName, curMaxFl, curFl
@@ -137,22 +142,40 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     
             # randomly choose if reverse complement
             endSite = startSite + curFl
-            if np.random.random() > 0.5:
+            left = None
+            right = None
+
+            # TODO: add functionality for reverse strand reads
+            # if np.random.random() > 0.5:
+            if True:
                 left = transSeq[startSite:(startSite + readLen)]
-                right = transSeq[endSite - readLen:endSite]
+                right = transRevSeq[endSite:(endSite - readLen):-1]
+                # right = transRevSeq[(endSite - readLen):endSite]
+                # right = transSeq[(endSite - readLen):endSite]
+                #right = right[::-1]
             else:
                 left = transRevSeq[startSite:(startSite + readLen)]
-                right = transRevSeq[endSite - readLen:endSite]
+                right = transRevSeq[(endSite - readLen):endSite]
+
+            # if right == "" or right is None:
+            #     print startSite, endSite - readLen, endSite, curFl, transLen
+
     
             allLeft[ranOrder[readNum]] = left
             allRight[ranOrder[readNum]] = right
+            # whichTrans[ranOrder[readNum]] = transName + ":" + str(transLen) + ":" + str(startSite) + ":" + \
+            #         str(startSite + readLen) + ":" + str(endSite - readLen) + ":" + \
+            #         str(endSite) + ":" + str(curFl) 
     
             readNum += 1
             fragNum += 1
 
     for i in xrange(len(allLeft)):
         fa_write(leftHandle, str(i), str(allLeft[i]))
+    for i in xrange(len(allLeft)):
         fa_write(rightHandle, str(i), str(allRight[i]))
+        # fa_write(leftHandle, str(i) + ":" + whichTrans[i], str(allLeft[i]))
+        # fa_write(rightHandle, str(i) + ":" + whichTrans[i], str(allRight[i]))
 
     leftHandle.close()
     rightHandle.close()
@@ -180,7 +203,8 @@ def main():
 
     print "Reading transcriptome sequence ", cfg["fasta"]
     fixedData = readFasta(cfg["fasta"])
-    fixedData['revSeq'] = fixedData['seq'].apply(lambda x: str(x.reverse_complement()))
+    # fixedData['revSeq'] = fixedData['seq'].apply(lambda x: str(x.reverse_complement()))
+    fixedData['revSeq'] = fixedData['seq'].apply(lambda x: str(x.complement()))
     fixedData['seq'] = fixedData['seq'].apply(lambda x: str(x))
     print "Reading relative abundances ", cfg["fpkm"]
     fpkm = readFpkm(cfg["fpkm"])
@@ -188,7 +212,7 @@ def main():
     print "Reading fragment length distribution ", cfg["fld"]
     fld = pd.read_table(cfg["fld"], header = None)[0]
     meanFl = sum(fld * pd.Series(range(0, len(fld))))
-    print "Computing (mean effective length ", cfg["fld"]
+    print "Computing (mean) effective length ", cfg["fld"]
     fixedData = computeEffLength(fixedData, meanFl)
 
     geneLabels = pd.read_csv(cfg["geneLabels"], index_col = 0)
@@ -222,7 +246,6 @@ def main():
 
     # remove isoforms with < 0.5 mean fragments
     fixedData = fixedData[fixedData['meanFrag'] > 0.5]
-
 
     # decide whether isoform is going to be DE
     fixedData['isDE'] = np.random.uniform(0, 1, fixedData.shape[0]) <= 0.10
@@ -271,13 +294,25 @@ def main():
     tpm['gene'] = tpm['gene'].fillna("NotAGene")
     geneTpm = tpm.groupby('gene').sum()
 
+    if not os.path.exists(cfg['outDir']):
+        os.makedirs(cfg['outDir'])
+
+    print "Writing out 'truth'"
+    tpm.to_csv(cfg['outDir'] + os.sep + "iso.tpm")
+    geneTpm.to_csv(cfg['outDir'] + os.sep + "gene.tpm")
+    fixedData.to_csv(cfg['outDir'] + os.sep + "fixedData.csv", 
+            cols = ['fpkm', 'lrho', 'isDE', 'meanFrag', 'dispersion', 'var', 'effLength'])
+
     # TODO: output tables (iso table and gene table)
+
     print "Simulating fragments"
-    startTime = time.time()
-    hi = simulateReads(isoCounts[0], cfg["readLength"], fixedData['seq'], fixedData['revSeq'], fld, 
-            "sim")
-    stopTime = time.time()
-    print stopTime - startTime
+    for i in xrange(isoCounts.shape[1]):
+        print "\tExperiment ", i
+        startTime = time.time()
+        simulateReads(isoCounts[i], cfg["readLength"], fixedData['seq'], 
+                fixedData['revSeq'], fld, cfg['outDir'] + os.sep + "sim_" + str(i))
+        stopTime = time.time()
+        print "\t\t", stopTime - startTime
 
 
 if __name__ == "__main__":
