@@ -285,6 +285,10 @@ def main():
     fixedData.to_csv(cfg['outDir'] + os.sep + "fixedData.csv", 
             cols = ['fpkm', 'lrho', 'isDE', 'meanFrag', 'dispersion', 'var', 'effLength'])
 
+    # XXX: does it make sense to output gene level counts? I don't think so.
+    # Maybe isoform level counts if actually modeling DE, but TPM is better
+    # measure anyway
+
     # TODO: output tables (iso table and gene table)
 
     print "Simulating fragments"
