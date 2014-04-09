@@ -10,6 +10,8 @@ import pandas as pd
 from Bio import SeqIO
 from scipy import stats
 from scipy.stats import nbinom
+from multiprocessing import Pool
+
 
 # inputs:
 # - expected number of reads
@@ -51,7 +53,7 @@ def negBinom(mu, disp):
     p = None
     
     if mu >= 0.5:
-        var = mu + (mu **2) * disp
+        var = mu + (mu ** 2) * disp
         r = mu ** 2 / (var - mu)
         p = r / (r + mu)
         return nbinom(r, p)
@@ -87,7 +89,7 @@ def computeLogRho(counts, effLen):
     return num - denom
 
 def lrhoToTpm(lrho):
-    return np.exp(lrho + np.log(10000000))
+    return np.exp(lrho + np.log(1e6))
 
 # @profile
 def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
@@ -170,6 +172,13 @@ def simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix):
     leftHandle.close()
     rightHandle.close()
 
+def simWrapper(countSeries, readLen, seqs, revSeqs, fld, filePrefix, it):
+    print "\tExperiment ", it
+    startTime = time.time()
+    simulateReads(countSeries, readLen, seqs, revSeqs, fld, filePrefix)
+    stopTime = time.time()
+    print "\t\tExperiment ", it, " took  ", stopTime - startTime
+
 def fa_write(fhandle, seq_id, seq):
     """
     Write to a FASTA file in the FASTA format.
@@ -186,7 +195,8 @@ def fa_write(fhandle, seq_id, seq):
         end = (i+1) * line_len if (i+1) * line_len < len(seq) else len(seq)
         fhandle.write( seq[ start:end ] + "\n")
 
-def main():
+if __name__ == "__main__":
+# def main():
     cfg = {}
     execfile(sys.argv[1], cfg) 
     # execfile("/Users/hjp/Documents/lmcb/pretender/examples/erythroidMouse.cfg", cfg)
@@ -226,6 +236,7 @@ def main():
     denom = fixedData['fpkm'].sum()
     fixedData['lrho'] = np.log(fixedData['fpkm']) - np.log(denom)
     fixedData = fixedData[~pd.isnull(np.exp(fixedData['lrho']))]
+    #fixedData = fixedData.ix[~pd.isnull(np.exp(fixedData['lrho']))]
 
     # compute alpha
     lEffLen = np.log(fixedData['effLength'])
@@ -254,8 +265,11 @@ def main():
     fixedData.loc[whichDE, 'change'] = fixedData.loc[whichDE, 'change'] * \
             np.exp(np.abs(np.random.standard_normal(len(whichDE))))
 
-    fixedData['dispersion'] = fixedData['meanFrag'].apply(lambda x: 
-            np.minimum(1 / (x * 0.005), 1/(1.5)))
+    # fixedData['dispersion'] = fixedData['meanFrag'].apply(lambda x: 
+    #         np.minimum(1 / (x * 0.005), 1/(1.5)))
+
+    # 1 / 0.25 was pulled from npSeq
+    fixedData['dispersion'] = 1 / 0.25 
 
     fixedData['var'] = fixedData['meanFrag'] + fixedData['dispersion'] * \
             fixedData['meanFrag'] ** 2
@@ -283,6 +297,7 @@ def main():
     tpm = lrhoToTpm(lrho)
     tpm.columns = range(tpm.shape[1])
     tpm['gene'] = geneLabels.loc[tpm.index]
+
     # The "null" group is called "NotAGene"
     tpm['gene'] = tpm['gene'].fillna("NotAGene")
     geneTpm = tpm.groupby('gene').sum()
@@ -291,28 +306,28 @@ def main():
         os.makedirs(cfg['outDir'])
 
     print "Writing out 'truth'"
-    tpm.to_csv(cfg['outDir'] + os.sep + "iso.tpm")
-    geneTpm.to_csv(cfg['outDir'] + os.sep + "gene.tpm")
+    tpm.to_csv(cfg['outDir'] + os.sep + "isoTpm")
+    geneTpm.to_csv(cfg['outDir'] + os.sep + "geneTpm")
     fixedData.to_csv(cfg['outDir'] + os.sep + "fixedData.csv", 
             cols = ['fpkm', 'lrho', 'isDE', 'meanFrag', 'dispersion', 'var', 'effLength'])
+    isoCounts.to_csv(cfg['outDir'] + os.sep + 'isoCounts.csv')
 
-    # XXX: does it make sense to output gene level counts? I don't think so.
-    # Maybe isoform level counts if actually modeling DE, but TPM is better
-    # measure anyway
 
-    # TODO: output count tables (iso table and gene table)
-
+    # TODO: Make 2 options: 1 for ThreadPool version (not process pool)
+    # 1 for single core
     print "Simulating fragments"
+    start = time.time()
+    pool = Pool(processes = cfg['nProc'])
     for i in xrange(isoCounts.shape[1]):
-    # for i in xrange(1):
-        print "\tExperiment ", i
-        startTime = time.time()
-        simulateReads(isoCounts[i], cfg["readLength"], fixedData['seq'], 
-                fixedData['revSeq'], fld, cfg['outDir'] + os.sep + "sim_" + str(i))
-        stopTime = time.time()
-        print "\t\t", stopTime - startTime
+        filePrefix = cfg['outDir'] + os.sep + "sim_" + str(i)
+        curArgs = (isoCounts[i], cfg["readLength"], fixedData['seq'], 
+                fixedData['revSeq'], fld, filePrefix, i)
+        pool.apply_async(simWrapper, curArgs)
+    pool.close()
+    pool.join()
+    stop = time.time()
+    print "Total fragment simulation time: ", stop - start
 
-
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
