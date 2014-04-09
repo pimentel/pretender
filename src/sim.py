@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from Bio import SeqIO
+from scipy import stats
 from scipy.stats import nbinom
 
 # inputs:
@@ -45,11 +46,18 @@ def readFpkm(inFile):
     return fpkm
 
 def negBinom(mu, disp):
-    var = mu + (mu **2) * disp
-    r = mu ** 2 / (var - mu)
-    p = r / (r + mu)
-
-    return nbinom(r, p)
+    var = None
+    r = None
+    p = None
+    
+    if mu >= 0.5:
+        var = mu + (mu **2) * disp
+        r = mu ** 2 / (var - mu)
+        p = r / (r + mu)
+        return nbinom(r, p)
+    else:
+        pointMass = stats.rv_discrete(name = "pointMass0", values = ((0), (1)))
+        return pointMass
 
 def kl(p, q):
     """Kullback-Leibler divergence D(P || Q) for discrete distributions
@@ -226,19 +234,25 @@ def main():
     fixedData['lalpha'] = num - denom
     fixedData['meanFrag'] = np.exp(fixedData['lalpha'] + np.log(cfg["numReads"]))
 
+
     # remove isoforms with < 0.5 mean fragments
-    fixedData = fixedData[fixedData['meanFrag'] > 0.5]
+    # XXX: Fix in negBinom() changes this
+    # fixedData = fixedData[fixedData['meanFrag'] > 0.5]
 
-    # decide whether isoform is going to be DE
-    fixedData['isDE'] = np.random.uniform(0, 1, fixedData.shape[0]) <= 0.10
-    fixedData['change'] = 1.0
-    nChange = sum(fixedData['isDE'])
+    # select those which will be DE
+    nDE = int(np.round(fixedData.shape[0] * cfg['propDE']))
+    whichDE = np.random.choice(fixedData.index[fixedData['meanFrag'] >= 1], 
+            size = nDE, replace = False)
+    fixedData['isDE'] = False
+    fixedData.loc[whichDE, 'isDE'] = True
 
-    # make 80% up-regulated and 20% down regulated with a tight, 
-    # and normal distribution
-    fixedData['change'][fixedData['isDE']] = np.random.choice([-1, 1], 
-            nChange, replace = True, p = [1 - cfg["propUp"], cfg["propUp"]]) * \
-                    np.random.normal(2, 0.1, nChange)
+    # compute the fold change
+    nDown = int(np.round(nDE * (1 - cfg['propUp'])))
+    whichDown = np.random.choice(whichDE, size = nDown, replace = False)
+    fixedData.loc[:,'change'] = 1
+    fixedData.loc[whichDown, 'change'] = -1
+    fixedData.loc[whichDE, 'change'] = fixedData.loc[whichDE, 'change'] * \
+            np.exp(np.abs(np.random.standard_normal(len(whichDE))))
 
     fixedData['dispersion'] = fixedData['meanFrag'].apply(lambda x: 
             np.minimum(1 / (x * 0.005), 1/(1.5)))
@@ -247,16 +261,13 @@ def main():
             fixedData['meanFrag'] ** 2
 
     fixedData['nb1'] = fixedData.apply(lambda row: 
-            negBinom(row['meanFrag'], row['dispersion']) if row['meanFrag'] >= 0.5 \
-                    else None, axis = 1)
+            negBinom(row['meanFrag'], row['dispersion']), axis = 1)
     fixedData['nb2'] = fixedData.apply(lambda row: 
-            negBinom(row['meanFrag'] * row['change'], row['dispersion']) if row['meanFrag'] * row['change'] >= 0.5 \
-                    else None, axis = 1)
-    fixedData = fixedData[fixedData['nb1'].notnull() & fixedData['nb2'].notnull()]
-
+            negBinom(row['meanFrag'] * row['change'], row['dispersion']), axis = 1)
+ 
     print "Simulating counts from negative binomials.."
-    counts1 = fixedData['nb1'].apply(lambda x: pd.Series(x.rvs(cfg["n1"])))
-    counts2 = fixedData['nb2'].apply(lambda x: pd.Series(x.rvs(cfg["n2"])))
+    counts1 = fixedData['nb1'].apply(lambda x: pd.Series(x.rvs(size = cfg["n1"])))
+    counts2 = fixedData['nb2'].apply(lambda x: pd.Series(x.rvs(size = cfg["n2"])))
     isoCounts = pd.concat([counts1, counts2], axis = 1) 
     isoCounts.columns = range(cfg["n1"] + cfg["n2"])
 
@@ -289,7 +300,7 @@ def main():
     # Maybe isoform level counts if actually modeling DE, but TPM is better
     # measure anyway
 
-    # TODO: output tables (iso table and gene table)
+    # TODO: output count tables (iso table and gene table)
 
     print "Simulating fragments"
     for i in xrange(isoCounts.shape[1]):
