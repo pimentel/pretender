@@ -52,6 +52,7 @@ def negBinom(mu, disp):
     r = None
     p = None
     
+    # TODO: make a zero inflated NB for low expression isoforms
     if mu >= 0.5:
         var = mu + (mu ** 2) * disp
         r = mu ** 2 / (var - mu)
@@ -232,12 +233,14 @@ if __name__ == "__main__":
 
     # TODO: clean this mess up and modularize is
 
+    print "Computing rho"
     # compute rho
     denom = fixedData['fpkm'].sum()
     fixedData['lrho'] = np.log(fixedData['fpkm']) - np.log(denom)
     fixedData = fixedData[~pd.isnull(np.exp(fixedData['lrho']))]
     #fixedData = fixedData.ix[~pd.isnull(np.exp(fixedData['lrho']))]
 
+    print "Computing alpha"
     # compute alpha
     lEffLen = np.log(fixedData['effLength'])
     num = fixedData['lrho'] + lEffLen
@@ -250,6 +253,7 @@ if __name__ == "__main__":
     # XXX: Fix in negBinom() changes this
     # fixedData = fixedData[fixedData['meanFrag'] > 0.5]
 
+    print "Choosing which isoforms to be DE"
     # select those which will be DE
     nDE = int(np.round(fixedData.shape[0] * cfg['propDE']))
     whichDE = np.random.choice(fixedData.index[fixedData['meanFrag'] >= 1], 
@@ -268,8 +272,8 @@ if __name__ == "__main__":
     # fixedData['dispersion'] = fixedData['meanFrag'].apply(lambda x: 
     #         np.minimum(1 / (x * 0.005), 1/(1.5)))
 
-    # 1 / 0.25 was pulled from npSeq
-    fixedData['dispersion'] = 1 / 0.25 
+    # 0.25 was pulled from npSeq
+    fixedData['dispersion'] = 0.25 
 
     fixedData['var'] = fixedData['meanFrag'] + fixedData['dispersion'] * \
             fixedData['meanFrag'] ** 2
